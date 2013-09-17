@@ -1,0 +1,16 @@
+#!/usr/bin/env escript
+%% -*- erlang -*-
+%%! -smp enable -sname schem
+
+main([File]) ->
+    case lfe_io:read_file(File) of
+        {ok, Sexprs} -> 
+            Result = schem:eval_sequence(Sexprs, schem:setup_environment(), ok),
+            lfe_io:prettyprint(Result),
+            io:format("~n");
+        {error, Error} ->
+            io:format("Read file error ~p ~n", [Error])
+    end; 
+
+main(_) ->
+    schem:repl().
