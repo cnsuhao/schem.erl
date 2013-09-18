@@ -101,9 +101,22 @@ define_variable(Var, Val, Env) ->
     Frame = first_frame(Env),
 	list_set_car(Env, add_binding_to_frame(Var, Val, Frame)).
 
+inc_depth() ->
+    case get(depth) of 
+        undefined -> put(depth, 1);
+        Depth -> put(depth, Depth+1)
+    end.
+
+dec_depth() ->
+    case get(depth) of
+        undefined -> exit(error_depth);
+        1 -> erase(depth);
+        Depth -> put(depth, Depth-1)
+    end.
+
 %eval
 eval(Exp, Env)        ->
-    %io:format("eval: ~p ~n", [Exp]),
+    %io:format("eval: ~p     By: ~p ~n", [Exp, self()]),
     case Exp of
 	_ when is_number(Exp) -> Exp;                   %% self_evaluating
 	_ when is_atom(Exp) -> lookup_variable_value(Exp, Env);   %% symbol = atom
@@ -117,7 +130,10 @@ eval(Exp, Env)        ->
             case io_lib:printable_list(Exp) of
                 true -> Exp;            %% string
                 _ ->
-                    myapply(actual_value(operator(Exp), Env), list_of_values(operands(Exp), Env), Env)
+                    inc_depth(),
+                    Args = list_of_values(operands(Exp), Env),
+                    dec_depth(),
+                    myapply(actual_value(operator(Exp), Env), Args, Env)
             end;
 	_ -> io:format("Unknow_expression_type ~p ~n", [Exp]),
 	     exit(error)
@@ -127,7 +143,7 @@ eval_sequence([], _, Result) ->
     force_it(Result);
 
 eval_sequence([Exp|Exps], Env, Result) ->
-    Re = eval(Exp, Env),
+    Re = actual_value(Exp, Env),
     case Re of
         {env, NewEnv} -> eval_sequence(Exps, NewEnv, Result);
         _ -> eval_sequence(Exps, Env, Re)
@@ -147,7 +163,9 @@ definition_values(Exp) ->
     end.
 
 eval_definition(Exp, Env) ->
+    inc_depth(),
     NewEnv = define_variable(definition_variable(Exp), eval(definition_values(Exp), Env), Env),
+    dec_depth(),
    % io:format("eval_definition(), Exp: ~p Self: ~p ~n", [Exp, self()]),
     {env, NewEnv}.    
 
@@ -163,7 +181,9 @@ assignment_value(Exp) ->
     list_car(list_cdr(list_cdr(Exp))).
 
 eval_assignment(Exp, Env) ->
+    inc_depth(),
     NewEnv = set_variable_value(assignment_variable(Exp), eval(assignment_value(Exp), Env), Env),
+    dec_depth(),
     {env, NewEnv}.
 
 %% if
@@ -183,10 +203,10 @@ if_alternative(Exp) ->
 eval_if(Exp, Env) ->
     Re = actual_value(if_predicate(Exp), Env),
     case Re of
-	false ->
-	    eval(if_alternative(Exp), Env);
-	_ -> 
-	    eval(if_consequent(Exp), Env)
+        false ->
+            eval(if_alternative(Exp), Env);
+        _ -> 
+            eval(if_consequent(Exp), Env)
     end.
 
 %% lambda
@@ -231,8 +251,13 @@ myapply(Procedure, Args, Env) ->
 	    apply_primitive_procedure(Procedure, list_of_force_args(Args));
 	[procedure| _] ->
         %io:format("myapply, sendout procedure body: ~p args: ~p ~n", [procedure_body(Procedure), Args]),
-	    Pid = spawn(schem, process_seq_eval, [procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, Env)]),
-	    [delay, Pid];
+        case get(depth) of
+                undefined ->
+                    eval_sequence(procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, Env), empty);
+                _ -> 
+                    Pid = spawn_link(schem, process_seq_eval, [procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, Env)]),
+                    [delay, Pid]
+        end;
 	_ -> io:format("Unkonwn procedure type --MYAPPLY ~p ~n", [Procedure])
     end.
 
@@ -315,6 +340,9 @@ offer_value(Result) ->
     receive 
         {Pid, value} ->
             Pid ! {self(), ok, Result}
+%    after 
+%            1000 ->
+%                io:format("offer_value timeout, ~p ~n", [self()])
     end,
     exit(normal).
 
