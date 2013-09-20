@@ -40,10 +40,10 @@ add_binding_to_frame(Var, Val, Frame) ->
 enclosing_environment(Env) ->
     list_cdr(Env).
 
-extend_environment(Vars, Vals, BaseEnv) ->
+extend_environment(Vars, Vals, BaseEnv, GlobalEnv) ->
     if
 	length(Vars) == length(Vals) ->
-	    list_cons(make_frame(Vars, Vals, dict:new()), BaseEnv);
+	    list_cons(make_frame(Vars, Vals, dict:new()), (BaseEnv ++ GlobalEnv));
 	length(Vars) =< length(Vals) ->
 	    io:format("Too many arguments supplied, ~p ~p ~n", [Vars, Vals]),
 	    exit(error);
@@ -51,6 +51,11 @@ extend_environment(Vars, Vals, BaseEnv) ->
 	    io:format("Too few arguments supplied, ~p ~p ~n", [Vars, Vals]),
 	    exit(error)
     end.
+
+remove_global_environment(Env) ->
+    ReEnv = lists:reverse(Env),
+    E = tl(ReEnv),
+    lists:reverse(E).
 
 getval_from_frame(Var, Frame) ->
     dict:fetch(Var, Frame).
@@ -125,7 +130,7 @@ eval(Exp, Env)        ->
 	['set!'| _] -> eval_assignment(Exp, Env);
 	['if'| _] -> eval_if(Exp, Env);
     ['begin'|BeginActions] -> eval_sequence(BeginActions, Env, empty);
-	['lambda'| _] -> make_procedure(lambda_parameters(Exp), lambda_body(Exp));
+	['lambda'| _] -> make_procedure(lambda_parameters(Exp), lambda_body(Exp), Env);
 	_ when is_list(Exp) ->
             case io_lib:printable_list(Exp) of
                 true -> Exp;            %% string
@@ -166,7 +171,6 @@ eval_definition(Exp, Env) ->
     inc_depth(),
     NewEnv = define_variable(definition_variable(Exp), eval(definition_values(Exp), Env), Env),
     dec_depth(),
-   % io:format("eval_definition(), Exp: ~p Self: ~p ~n", [Exp, self()]),
     {env, NewEnv}.    
 
 %% quote
@@ -219,9 +223,8 @@ lambda_body(Exp) ->
 make_lambda(Pars, Body) ->
     list_cons(lambda, list_cons(Pars, Body)).
 
-make_procedure(Pars, Body) ->
-    %io:format("make_procedure: ~p ~p ~p~n", [procedure, Pars, Body]),
-    [procedure, Pars, Body].
+make_procedure(Pars, Body, Env) ->
+    [procedure, Pars, Body, remove_global_environment(Env)].
 
     
 %% apply
@@ -245,7 +248,7 @@ list_of_values(Expes, Env) ->
 	    list_cons(eval(first_operand(Expes), Env), list_of_values(rest_operands(Expes), Env))
     end.
 
-myapply(Procedure, Args, Env) ->
+myapply(Procedure, Args ,GlobalEnv) ->
     case Procedure of
 	[primitive| _] ->
 	    apply_primitive_procedure(Procedure, list_of_force_args(Args));
@@ -253,12 +256,12 @@ myapply(Procedure, Args, Env) ->
         %io:format("myapply, sendout procedure body: ~p args: ~p ~n", [procedure_body(Procedure), Args]),
         case get(depth) of
                 undefined ->
-                    eval_sequence(procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, Env), empty);
+                    eval_sequence(procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, procedure_environment(Procedure), GlobalEnv), empty);
                 _ -> 
-                    Pid = spawn_link(schem, process_seq_eval, [procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, Env)]),
+                    Pid = spawn_link(schem, process_seq_eval, [procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, procedure_environment(Procedure), GlobalEnv)]),
                     [delay, Pid]
         end;
-	_ -> io:format("Unkonwn procedure type --MYAPPLY ~p ~n", [Procedure])
+	_ -> io:format("Unkonwn procedure type --MYAPPLY ~p , Args ~p ~n", [Procedure, Args])
     end.
 
 list_of_force_args(Args) ->
@@ -287,6 +290,10 @@ procedure_parameters(P) ->
 
 procedure_body(P) ->
     list_car(list_cdr(list_cdr(P))).
+
+procedure_environment(P) ->
+    list_car(list_cdr(list_cdr(list_cdr(P)))).
+
 
 %% Run environment
 apply_primitive_procedure(P, Args) ->
