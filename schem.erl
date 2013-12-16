@@ -40,10 +40,10 @@ add_binding_to_frame(Var, Val, Frame) ->
 enclosing_environment(Env) ->
     list_cdr(Env).
 
-extend_environment(Vars, Vals, BaseEnv, GlobalEnv) ->
+extend_environment(Vars, Vals, BaseEnv) ->
     if
 	length(Vars) == length(Vals) ->
-	    list_cons(make_frame(Vars, Vals, dict:new()), (BaseEnv ++ GlobalEnv));
+	    list_cons(make_frame(Vars, Vals, dict:new()), BaseEnv);
 	length(Vars) =< length(Vals) ->
 	    io:format("Too many arguments supplied, ~p ~p ~n", [Vars, Vals]),
 	    exit(error);
@@ -51,11 +51,6 @@ extend_environment(Vars, Vals, BaseEnv, GlobalEnv) ->
 	    io:format("Too few arguments supplied, ~p ~p ~n", [Vars, Vals]),
 	    exit(error)
     end.
-
-remove_global_environment(Env) ->
-    ReEnv = lists:reverse(Env),
-    E = tl(ReEnv),
-    lists:reverse(E).
 
 getval_from_frame(Var, Frame) ->
     dict:fetch(Var, Frame).
@@ -138,7 +133,7 @@ eval(Exp, Env)        ->
                     inc_depth(),
                     Args = list_of_values(operands(Exp), Env),
                     dec_depth(),
-                    myapply(actual_value(operator(Exp), Env), Args, Env)
+                    myapply(actual_value(operator(Exp), Env), Args)
             end;
 	_ -> io:format("Unknow_expression_type ~p ~n", [Exp]),
 	     exit(error)
@@ -224,7 +219,7 @@ make_lambda(Pars, Body) ->
     list_cons(lambda, list_cons(Pars, Body)).
 
 make_procedure(Pars, Body, Env) ->
-    [procedure, Pars, Body, remove_global_environment(Env)].
+    [procedure, Pars, Body, Env].
 
     
 %% apply
@@ -248,7 +243,7 @@ list_of_values(Expes, Env) ->
 	    list_cons(eval(first_operand(Expes), Env), list_of_values(rest_operands(Expes), Env))
     end.
 
-myapply(Procedure, Args ,GlobalEnv) ->
+myapply(Procedure, Args) ->
     case Procedure of
 	[primitive| _] ->
 	    apply_primitive_procedure(Procedure, list_of_force_args(Args));
@@ -256,9 +251,9 @@ myapply(Procedure, Args ,GlobalEnv) ->
         %io:format("myapply, sendout procedure body: ~p args: ~p ~n", [procedure_body(Procedure), Args]),
         case get(depth) of
                 undefined ->
-                    eval_sequence(procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, procedure_environment(Procedure), GlobalEnv), empty);
+                    eval_sequence(procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, procedure_environment(Procedure)), empty);
                 _ -> 
-                    Pid = spawn_link(schem, process_seq_eval, [procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, procedure_environment(Procedure), GlobalEnv)]),
+                    Pid = spawn_link(schem, process_seq_eval, [procedure_body(Procedure), extend_environment(procedure_parameters(Procedure), Args, procedure_environment(Procedure))]),
                     [delay, Pid]
         end;
 	_ -> io:format("Unkonwn procedure type --MYAPPLY ~p , Args ~p ~n", [Procedure, Args])
